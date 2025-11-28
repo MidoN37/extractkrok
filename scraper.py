@@ -2,7 +2,7 @@ import os
 import sys
 import re
 import time
-import requests
+# requests is no longer needed for the font
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -26,9 +26,9 @@ LOGIN_URL = "https://test.testcentr.org.ua/login/index.php"
 TXT_FOLDER = "txt"
 PDF_FOLDER = "pdf"
 
-# --- FONT CONFIG FOR LINUX/GITHUB ACTIONS ---
-FONT_URL = "https://github.com/googlefonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf"
-FONT_FILE = "DejaVuSans.ttf"
+# --- FONT CONFIG ---
+# We expect this file to be in the repo now
+FONT_FILE = "DejaVuSans.ttf" 
 FONT_NAME = 'DejaVuSans'
 
 # --- THE HARDCODED LIST ---
@@ -108,18 +108,18 @@ class KrokScraper:
         if not os.path.exists(PDF_FOLDER): os.makedirs(PDF_FOLDER)
 
     def setup_font(self):
-        # Download font if missing (Required for Linux/GitHub Actions)
+        # Check if font exists in the repo
         if not os.path.exists(FONT_FILE):
-            print("⬇️ Downloading Unicode font...", flush=True)
-            r = requests.get(FONT_URL)
-            with open(FONT_FILE, 'wb') as f:
-                f.write(r.content)
+            print(f"❌ Error: {FONT_FILE} not found in repository root.", flush=True)
+            print("   Please upload DejaVuSans.ttf to your GitHub repo.", flush=True)
+            sys.exit(1)
         
         # Register Font
         try:
             pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_FILE))
+            print(f"✅ Font registered: {FONT_NAME}", flush=True)
         except Exception as e:
-            print(f"❌ Font Error: {e}", flush=True)
+            print(f"❌ Font Registration Error: {e}", flush=True)
             sys.exit(1)
 
     def setup_driver(self):
@@ -294,7 +294,7 @@ class KrokScraper:
         print(f"\n💾 TXT Saved: {filepath}", flush=True)
         return filepath
 
-    # --- PDF LOGIC (Ported from your script) ---
+    # --- PDF LOGIC ---
     def wrap_text(self, text, font_name, font_size, max_width):
         lines = []
         words = text.split(' ')
