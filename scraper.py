@@ -2,7 +2,7 @@ import os
 import sys
 import re
 import time
-# requests is no longer needed for the font
+import requests
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -27,9 +27,10 @@ TXT_FOLDER = "txt"
 PDF_FOLDER = "pdf"
 
 # --- FONT CONFIG ---
-# We expect this file to be in the repo now
 FONT_FILE = "DejaVuSans.ttf" 
 FONT_NAME = 'DejaVuSans'
+# Direct Raw Link to the font
+FONT_URL = "https://raw.githubusercontent.com/dejavu-fonts/dejavu-fonts/master/ttf/DejaVuSans.ttf"
 
 # --- THE HARDCODED LIST ---
 TEST_MAP = {
@@ -108,11 +109,15 @@ class KrokScraper:
         if not os.path.exists(PDF_FOLDER): os.makedirs(PDF_FOLDER)
 
     def setup_font(self):
-        # Check if font exists in the repo
-        if not os.path.exists(FONT_FILE):
-            print(f"❌ Error: {FONT_FILE} not found in repository root.", flush=True)
-            print("   Please upload DejaVuSans.ttf to your GitHub repo.", flush=True)
-            sys.exit(1)
+        # Logic: If file doesn't exist OR is too small (corrupt/html), download it
+        if not os.path.exists(FONT_FILE) or os.path.getsize(FONT_FILE) < 10000:
+            print("⬇️ Downloading Unicode font...", flush=True)
+            try:
+                r = requests.get(FONT_URL)
+                with open(FONT_FILE, 'wb') as f:
+                    f.write(r.content)
+            except Exception as e:
+                print(f"❌ Download failed: {e}", flush=True)
         
         # Register Font
         try:
@@ -120,7 +125,12 @@ class KrokScraper:
             print(f"✅ Font registered: {FONT_NAME}", flush=True)
         except Exception as e:
             print(f"❌ Font Registration Error: {e}", flush=True)
-            sys.exit(1)
+            print("   Attempting force re-download...", flush=True)
+            # Last ditch effort: Force download again
+            r = requests.get(FONT_URL)
+            with open(FONT_FILE, 'wb') as f:
+                f.write(r.content)
+            pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_FILE))
 
     def setup_driver(self):
         options = webdriver.ChromeOptions()
