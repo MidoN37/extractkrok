@@ -98,136 +98,162 @@ class KrokScraper:
         self.driver = webdriver.Chrome(options=options)
 
     def login(self):
-        print(f"Logging in...")
+        print(f"🔑 Logging in...", flush=True)
         wait = WebDriverWait(self.driver, 15)
         self.driver.get(LOGIN_URL)
         wait.until(EC.presence_of_element_located((By.ID, "username"))).send_keys(USERNAME)
         self.driver.find_element(By.ID, "password").send_keys(PASSWORD)
         self.driver.find_element(By.ID, "loginbtn").click()
         wait.until(EC.presence_of_element_located((By.ID, "page-footer")))
-        print("Login successful.")
+        print("✅ Login successful.", flush=True)
 
     def run(self):
         target_name = TEST_MAP.get(TARGET_ID)
         if not target_name:
-            print(f"❌ Error: ID {TARGET_ID} is not in the list.")
+            print(f"❌ Error: ID {TARGET_ID} is not in the list.", flush=True)
             sys.exit(1)
 
         try:
             self.login()
-            print(f"Searching for: {target_name}")
+            print(f"🔎 Searching for test: {target_name}", flush=True)
             self.driver.get(COURSE_URL)
             
-            # Find the specific test link by text
             try:
-                # We use partial link text because of occasional whitespace issues
-                link = self.driver.find_element(By.PARTIAL_LINK_TEXT, target_name)
-                print(f"Found link: {link.text}")
-                link.click()
+                link_element = self.driver.find_element(By.PARTIAL_LINK_TEXT, target_name)
+                target_link = link_element.get_attribute('href')
+                print(f"🔗 Found link: {target_link}", flush=True)
             except:
-                print(f"❌ Could not find link with text: {target_name}")
+                print(f"❌ Could not find link with text: {target_name}", flush=True)
                 sys.exit(1)
 
-            # Now inside the test folder - Scrape the logic
-            questions = self.scrape_logic()
+            # --- THE LOOPING LOGIC ---
+            questions = self.scrape_loop(target_link)
             
             if questions:
                 self.save_txt(target_name, questions)
             else:
-                print("❌ No questions collected.")
+                print("❌ No questions collected.", flush=True)
                 sys.exit(1)
 
         finally:
             self.driver.quit()
 
-    def scrape_logic(self):
-        wait = WebDriverWait(self.driver, 10)
+    def scrape_loop(self, quiz_link):
         questions_map = {}
-
-        # 1. Start / Continue Test
-        print("Starting attempt...")
-        try:
-            # Try finding "Continue" or "Attempt quiz now"
-            btns = self.driver.find_elements(By.CSS_SELECTOR, "button")
-            for btn in btns:
-                txt = btn.text.lower()
-                if "continue" in txt or "attempt" in txt or "розпочати" in txt or "продовжити" in txt:
-                    self.driver.execute_script("arguments[0].click();", btn)
-                    break
-            
-            # Start attempt popup confirmation
-            try:
-                popup = wait.until(EC.element_to_be_clickable((By.ID, "id_submitbutton")))
-                popup.click()
-            except: pass
-
-        except Exception as e:
-            print(f"Start logic warning: {e}")
-
-        # 2. Finish Attempt (Immediately submit)
-        print("Finishing attempt...")
-        try:
-            # Click "Finish attempt" link
-            finish_link = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".endtestlink")))
-            self.driver.execute_script("arguments[0].click();", finish_link)
-
-            # Click "Submit all and finish" (1st time)
-            s_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".btn-finishattempt button")))
-            self.driver.execute_script("arguments[0].click();", s_btn)
-
-            # Click "Submit all and finish" (Modal confirmation)
-            m_btn = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".modal-footer button.btn-primary")))
-            self.driver.execute_script("arguments[0].click();", m_btn)
-        except Exception as e:
-            print(f"Finish logic warning (test might be already closed): {e}")
-
-        # 3. Expand All ("Show all questions on one page")
-        print("Expanding questions...")
-        try:
-            show_all = wait.until(EC.presence_of_element_located((By.XPATH, "//a[contains(@href, 'showall=1')]")))
-            self.driver.execute_script("arguments[0].click();", show_all)
-            time.sleep(2)
-        except: 
-            print("Could not find 'Show all' link, checking if already expanded...")
-
-        # 4. Parse Content
-        print("Parsing content...")
-        soup = BeautifulSoup(self.driver.page_source, 'html.parser')
-        questions = soup.find_all("div", class_="que")
+        wait = WebDriverWait(self.driver, 10)
         
-        for q in questions:
-            q_text_div = q.find("div", class_="qtext")
-            if not q_text_div: continue
-            q_text = q_text_div.get_text(strip=True)
-            
-            if q_text in questions_map: continue
+        consecutive_empty_rounds = 0
+        round_num = 1
+        max_rounds = 4  # Stop if 4 rounds in a row give 0 new questions
 
-            correct_ans = ""
-            feedback = q.find("div", class_="feedback")
-            if feedback:
-                ra = feedback.find("div", class_="rightanswer")
-                if ra: correct_ans = ra.get_text(strip=True).replace("The correct answer is:", "").replace("Правильна відповідь:", "").strip()
+        print(f"\n🚀 STARTING SCRAPE LOOP (Max empty rounds: {max_rounds})", flush=True)
 
-            options_str = ""
-            ans_div = q.find("div", class_="answer")
-            if ans_div:
-                opts = ans_div.find_all("div", recursive=False) or ans_div.find_all("div", class_="d-flex")
-                for opt in opts:
-                    l_span = opt.find("span", class_="answernumber")
-                    if not l_span: continue
-                    letter = l_span.get_text(strip=True)
-                    t_div = opt.find("div", class_="flex-fill")
-                    txt = t_div.get_text(strip=True) if t_div else ""
+        while consecutive_empty_rounds < max_rounds:
+            print(f"\n🔄 STARTING ROUND {round_num}...", flush=True)
+            try:
+                self.driver.get(quiz_link)
+
+                # 1. Attempt / Continue
+                found_btn = False
+                for sel in [".quizstartbuttondiv button", "//button[contains(text(), 'Continue')]", "//button[contains(text(), 'Attempt')]"]:
+                    try:
+                        if "//" in sel: btn = wait.until(EC.element_to_be_clickable((By.XPATH, sel)))
+                        else: btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, sel)))
+                        self.driver.execute_script("arguments[0].click();", btn)
+                        found_btn = True
+                        break
+                    except: continue
+                
+                # 2. Handle Popup
+                try:
+                    popup_btn = self.driver.find_element(By.ID, "id_submitbutton")
+                    if popup_btn.is_displayed():
+                        self.driver.execute_script("arguments[0].click();", popup_btn)
+                except: pass
+
+                # 3. Finish Attempt
+                try:
+                    finish_link = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".endtestlink")))
+                    self.driver.execute_script("arguments[0].click();", finish_link)
+                except: 
+                    print("   ⚠️ Could not find 'Finish attempt' link. Retrying...", flush=True)
+                    consecutive_empty_rounds += 1
+                    continue
+
+                # 4. Submit
+                for _ in range(3):
+                    try:
+                        s_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".btn-finishattempt button")))
+                        self.driver.execute_script("arguments[0].click();", s_btn)
+                        m_btn = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".modal-footer button.btn-primary")))
+                        self.driver.execute_script("arguments[0].click();", m_btn)
+                        break
+                    except: time.sleep(0.5)
+
+                # 5. Expand
+                try:
+                    show_all = wait.until(EC.presence_of_element_located((By.XPATH, "//a[contains(@href, 'showall=1')]")))
+                    self.driver.execute_script("arguments[0].click();", show_all)
+                    time.sleep(2)
+                except: pass
+
+                # 6. Parse
+                wait.until(EC.presence_of_element_located((By.CLASS_NAME, "que")))
+                soup = BeautifulSoup(self.driver.page_source, 'html.parser')
+                questions = soup.find_all("div", class_="que")
+                
+                new_count = 0
+                for q in questions:
+                    q_text_div = q.find("div", class_="qtext")
+                    if not q_text_div: continue
+                    q_text = q_text_div.get_text(strip=True)
                     
-                    pre = "*" if correct_ans and txt.strip() == correct_ans else ""
-                    options_str += f"{pre}{letter} {txt}\n"
+                    if q_text in questions_map: continue
 
-            questions_map[q_text] = f"{q_text}\n{options_str}"
+                    # Logic
+                    correct_ans = ""
+                    feedback = q.find("div", class_="feedback")
+                    if feedback:
+                        ra = feedback.find("div", class_="rightanswer")
+                        if ra: correct_ans = ra.get_text(strip=True).replace("The correct answer is:", "").replace("Правильна відповідь:", "").strip()
 
+                    options_str = ""
+                    ans_div = q.find("div", class_="answer")
+                    if ans_div:
+                        opts = ans_div.find_all("div", recursive=False) or ans_div.find_all("div", class_="d-flex")
+                        for opt in opts:
+                            l_span = opt.find("span", class_="answernumber")
+                            if not l_span: continue
+                            letter = l_span.get_text(strip=True)
+                            t_div = opt.find("div", class_="flex-fill")
+                            txt = t_div.get_text(strip=True) if t_div else ""
+                            
+                            pre = "*" if correct_ans and txt.strip() == correct_ans else ""
+                            options_str += f"{pre}{letter} {txt}\n"
+
+                    questions_map[q_text] = f"{q_text}\n{options_str}"
+                    new_count += 1
+
+                # --- LOGGING THE RESULT ---
+                print(f"   ✅ Round {round_num} Complete: Found {new_count} new questions. (Total Collected: {len(questions_map)})", flush=True)
+                
+                if new_count == 0: 
+                    consecutive_empty_rounds += 1
+                    print(f"   ⚠️ No new questions found. ({consecutive_empty_rounds}/{max_rounds} empty rounds)", flush=True)
+                else: 
+                    consecutive_empty_rounds = 0
+
+                round_num += 1
+                time.sleep(1)
+
+            except Exception as e:
+                print(f"   ❌ Round Error: {e}", flush=True)
+                consecutive_empty_rounds += 1
+                time.sleep(2)
+        
         return questions_map
 
     def save_txt(self, name, data):
-        # Clean filename
         clean_name = re.sub(r'[\\/*?:"<>|]', "", name).strip()
         filename = f"{clean_name}.txt"
         filepath = os.path.join(OUTPUT_FOLDER, filename)
@@ -237,7 +263,7 @@ class KrokScraper:
             for _, val in data.items():
                 f.write(f"{counter}. {val}\n")
                 counter += 1
-        print(f"✅ Saved to: {filepath}")
+        print(f"\n💾 Saved to: {filepath}", flush=True)
 
 if __name__ == "__main__":
     KrokScraper().run()
