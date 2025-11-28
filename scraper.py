@@ -2,7 +2,6 @@ import os
 import sys
 import re
 import time
-import requests
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -26,11 +25,10 @@ LOGIN_URL = "https://test.testcentr.org.ua/login/index.php"
 TXT_FOLDER = "txt"
 PDF_FOLDER = "pdf"
 
-# --- FONT CONFIG (Google Noto Sans) ---
-FONT_FILE = "NotoSans-Regular.ttf" 
-FONT_NAME = 'NotoSans'
-# Official Google Fonts Raw Link
-FONT_URL = "https://github.com/google/fonts/raw/main/ofl/notosans/NotoSans-Regular.ttf"
+# --- FONT CONFIG ---
+# This file MUST exist in your repo root
+FONT_FILE = "DejaVuSans.ttf" 
+FONT_NAME = 'DejaVuSans'
 
 # --- THE HARDCODED LIST ---
 TEST_MAP = {
@@ -109,31 +107,19 @@ class KrokScraper:
         if not os.path.exists(PDF_FOLDER): os.makedirs(PDF_FOLDER)
 
     def setup_font(self):
-        # 1. Clean up any previous corrupt files
-        if os.path.exists(FONT_FILE):
-            try:
-                # If it's too small, it's likely a 404 HTML page, delete it
-                if os.path.getsize(FONT_FILE) < 10000:
-                    os.remove(FONT_FILE)
-                    print("🗑️ Removed corrupt font file.", flush=True)
-            except: pass
-
-        # 2. Download if missing
+        # Check if font exists in the repo
         if not os.path.exists(FONT_FILE):
-            print(f"⬇️ Downloading {FONT_NAME}...", flush=True)
-            try:
-                r = requests.get(FONT_URL)
-                if r.status_code == 200:
-                    with open(FONT_FILE, 'wb') as f:
-                        f.write(r.content)
-                else:
-                    print(f"❌ Download failed with status code: {r.status_code}", flush=True)
-                    sys.exit(1)
-            except Exception as e:
-                print(f"❌ Download failed: {e}", flush=True)
-                sys.exit(1)
+            print(f"❌ Error: {FONT_FILE} not found in repository root.", flush=True)
+            print("   Please upload DejaVuSans.ttf to your GitHub repo.", flush=True)
+            sys.exit(1)
         
-        # 3. Register Font
+        # Check for corrupt file (HTML saved as TTF)
+        if os.path.getsize(FONT_FILE) < 10000:
+             print(f"❌ Error: {FONT_FILE} is too small (<10KB). It is likely corrupt or an HTML file.", flush=True)
+             print("   Please download the raw TTF file and upload it again.", flush=True)
+             sys.exit(1)
+
+        # Register Font
         try:
             pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_FILE))
             print(f"✅ Font registered: {FONT_NAME}", flush=True)
