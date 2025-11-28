@@ -2,11 +2,19 @@ import os
 import sys
 import re
 import time
+import requests
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
+
+# --- PDF IMPORTS ---
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.lib import colors
 
 # --- CONFIG ---
 USERNAME = os.environ.get("KROK_USERNAME")
@@ -15,7 +23,13 @@ TARGET_ID = int(os.environ.get("TARGET_ID", 0))
 
 COURSE_URL = "https://test.testcentr.org.ua/course/view.php?id=4"
 LOGIN_URL = "https://test.testcentr.org.ua/login/index.php"
-OUTPUT_FOLDER = "txt"
+TXT_FOLDER = "txt"
+PDF_FOLDER = "pdf"
+
+# --- FONT CONFIG FOR LINUX/GITHUB ACTIONS ---
+FONT_URL = "https://github.com/googlefonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf"
+FONT_FILE = "DejaVuSans.ttf"
+FONT_NAME = 'DejaVuSans'
 
 # --- THE HARDCODED LIST ---
 TEST_MAP = {
@@ -86,8 +100,27 @@ class KrokScraper:
     def __init__(self):
         self.driver = None
         self.setup_driver()
-        if not os.path.exists(OUTPUT_FOLDER):
-            os.makedirs(OUTPUT_FOLDER)
+        self.prepare_folders()
+        self.setup_font()
+
+    def prepare_folders(self):
+        if not os.path.exists(TXT_FOLDER): os.makedirs(TXT_FOLDER)
+        if not os.path.exists(PDF_FOLDER): os.makedirs(PDF_FOLDER)
+
+    def setup_font(self):
+        # Download font if missing (Required for Linux/GitHub Actions)
+        if not os.path.exists(FONT_FILE):
+            print("⬇️ Downloading Unicode font...", flush=True)
+            r = requests.get(FONT_URL)
+            with open(FONT_FILE, 'wb') as f:
+                f.write(r.content)
+        
+        # Register Font
+        try:
+            pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_FILE))
+        except Exception as e:
+            print(f"❌ Font Error: {e}", flush=True)
+            sys.exit(1)
 
     def setup_driver(self):
         options = webdriver.ChromeOptions()
@@ -126,11 +159,14 @@ class KrokScraper:
                 print(f"❌ Could not find link with text: {target_name}", flush=True)
                 sys.exit(1)
 
-            # --- THE LOOPING LOGIC ---
+            # --- SCRAPE ---
             questions = self.scrape_loop(target_link)
             
             if questions:
-                self.save_txt(target_name, questions)
+                # 1. Save TXT
+                txt_path = self.save_txt(target_name, questions)
+                # 2. Convert to PDF
+                self.convert_to_pdf(txt_path)
             else:
                 print("❌ No questions collected.", flush=True)
                 sys.exit(1)
@@ -144,7 +180,7 @@ class KrokScraper:
         
         consecutive_empty_rounds = 0
         round_num = 1
-        max_rounds = 4  # Stop if 4 rounds in a row give 0 new questions
+        max_rounds = 4 
 
         print(f"\n🚀 STARTING SCRAPE LOOP (Max empty rounds: {max_rounds})", flush=True)
 
@@ -154,21 +190,18 @@ class KrokScraper:
                 self.driver.get(quiz_link)
 
                 # 1. Attempt / Continue
-                found_btn = False
                 for sel in [".quizstartbuttondiv button", "//button[contains(text(), 'Continue')]", "//button[contains(text(), 'Attempt')]"]:
                     try:
                         if "//" in sel: btn = wait.until(EC.element_to_be_clickable((By.XPATH, sel)))
                         else: btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, sel)))
                         self.driver.execute_script("arguments[0].click();", btn)
-                        found_btn = True
                         break
                     except: continue
                 
-                # 2. Handle Popup
+                # 2. Popup
                 try:
                     popup_btn = self.driver.find_element(By.ID, "id_submitbutton")
-                    if popup_btn.is_displayed():
-                        self.driver.execute_script("arguments[0].click();", popup_btn)
+                    if popup_btn.is_displayed(): self.driver.execute_script("arguments[0].click();", popup_btn)
                 except: pass
 
                 # 3. Finish Attempt
@@ -210,7 +243,6 @@ class KrokScraper:
                     
                     if q_text in questions_map: continue
 
-                    # Logic
                     correct_ans = ""
                     feedback = q.find("div", class_="feedback")
                     if feedback:
@@ -234,14 +266,10 @@ class KrokScraper:
                     questions_map[q_text] = f"{q_text}\n{options_str}"
                     new_count += 1
 
-                # --- LOGGING THE RESULT ---
-                print(f"   ✅ Round {round_num} Complete: Found {new_count} new questions. (Total Collected: {len(questions_map)})", flush=True)
+                print(f"   ✅ Round {round_num} Complete: Found {new_count} new questions. (Total: {len(questions_map)})", flush=True)
                 
-                if new_count == 0: 
-                    consecutive_empty_rounds += 1
-                    print(f"   ⚠️ No new questions found. ({consecutive_empty_rounds}/{max_rounds} empty rounds)", flush=True)
-                else: 
-                    consecutive_empty_rounds = 0
+                if new_count == 0: consecutive_empty_rounds += 1
+                else: consecutive_empty_rounds = 0
 
                 round_num += 1
                 time.sleep(1)
@@ -256,14 +284,94 @@ class KrokScraper:
     def save_txt(self, name, data):
         clean_name = re.sub(r'[\\/*?:"<>|]', "", name).strip()
         filename = f"{clean_name}.txt"
-        filepath = os.path.join(OUTPUT_FOLDER, filename)
+        filepath = os.path.join(TXT_FOLDER, filename)
         
         with open(filepath, "w", encoding="utf-8") as f:
             counter = 1
             for _, val in data.items():
                 f.write(f"{counter}. {val}\n")
                 counter += 1
-        print(f"\n💾 Saved to: {filepath}", flush=True)
+        print(f"\n💾 TXT Saved: {filepath}", flush=True)
+        return filepath
+
+    # --- PDF LOGIC (Ported from your script) ---
+    def wrap_text(self, text, font_name, font_size, max_width):
+        lines = []
+        words = text.split(' ')
+        current_line = []
+        
+        for word in words:
+            test_line = ' '.join(current_line + [word])
+            width = pdfmetrics.stringWidth(test_line, font_name, font_size)
+            if width < max_width:
+                current_line.append(word)
+            else:
+                lines.append(' '.join(current_line))
+                current_line = [word]
+        if current_line:
+            lines.append(' '.join(current_line))
+        return lines
+
+    def convert_to_pdf(self, txt_path):
+        filename = os.path.basename(txt_path).replace(".txt", ".pdf")
+        pdf_path = os.path.join(PDF_FOLDER, filename)
+        print(f"⚙️ Converting to PDF: {pdf_path}...", flush=True)
+
+        c = canvas.Canvas(pdf_path, pagesize=A4)
+        width, height = A4
+        
+        margin_left = 40
+        margin_right = 40
+        max_text_width = width - margin_left - margin_right
+        line_height = 16
+        font_size = 11
+        
+        y = height - 40 
+        c.setFont(FONT_NAME, font_size)
+
+        with open(txt_path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    y -= 10
+                    continue
+
+                bg_color = None
+                text_color = colors.black
+
+                # 1. DETECT QUESTION (Yellow)
+                if re.match(r'^\d+\.', line):
+                    bg_color = colors.lightyellow
+                    text_color = colors.black
+                
+                # 2. DETECT CORRECT ANSWER (Green)
+                elif line.startswith('*'):
+                    line = line[1:].strip() # Remove asterisk
+                    bg_color = colors.lightgreen
+                    text_color = colors.darkgreen
+                
+                # 3. NORMAL OPTION
+                else:
+                    text_color = colors.darkgrey
+
+                wrapped_lines = self.wrap_text(line, FONT_NAME, font_size, max_text_width)
+
+                for wrapped_line in wrapped_lines:
+                    if y < 40:
+                        c.showPage()
+                        c.setFont(FONT_NAME, font_size)
+                        y = height - 40
+
+                    if bg_color:
+                        c.setFillColor(bg_color)
+                        c.rect(margin_left - 2, y - 4, max_text_width + 4, line_height, fill=1, stroke=0)
+
+                    c.setFillColor(text_color)
+                    c.drawString(margin_left, y, wrapped_line)
+                    y -= line_height
+
+        c.save()
+        print(f"✅ PDF Created Successfully.", flush=True)
 
 if __name__ == "__main__":
     KrokScraper().run()
