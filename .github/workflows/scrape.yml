@@ -1,0 +1,43 @@
+name: Scrape Krok Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_id:
+        description: 'Enter Test Number (e.g. 6)'
+        required: true
+        type: string
+
+jobs:
+  scrape-and-save:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Allows the bot to push code
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install Dependencies
+        run: |
+          pip install requests selenium beautifulsoup4
+
+      - name: Run Scraper
+        env:
+          KROK_USERNAME: ${{ secrets.KROK_USERNAME }}
+          KROK_PASSWORD: ${{ secrets.KROK_PASSWORD }}
+          TARGET_ID: ${{ github.event.inputs.test_id }}
+        run: python scraper.py
+
+      - name: Commit and Push Results
+        run: |
+          git config --global user.name "KrokScraperBot"
+          git config --global user.email "bot@noreply.github.com"
+          git add txt/*.txt
+          git commit -m "Add test #${{ github.event.inputs.test_id }}" || echo "No changes to commit"
+          git push
