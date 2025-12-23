@@ -34,7 +34,7 @@ FONT_NAME = 'DejaVuSans'
 TEST_MAP = {
     1: 'Крок 1 Промислова фармація',
     2: 'Крок 1 Фармація (UA)',
-    3: 'Крок 1 Стоматологія (UA)',
+    3: 'Крок 1 Стоматологія (UA) (від 2026 року)',
     4: 'Krok 1 Stomatology (EN)',
     5: 'Krok 1 Pharmacy (EN)',
     6: 'Krok 1 Medicine (EN)',
