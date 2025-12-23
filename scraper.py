@@ -25,8 +25,6 @@ LOGIN_URL = "https://test.testcentr.org.ua/login/index.php"
 TXT_FOLDER = "txt"
 PDF_FOLDER = "pdf"
 
-# --- FONT CONFIG ---
-# This file MUST exist in your repo root
 FONT_FILE = "DejaVuSans.ttf" 
 FONT_NAME = 'DejaVuSans'
 
@@ -52,7 +50,7 @@ TEST_MAP = {
     18: 'Krok 2 Pharmacy (EN)',
     19: 'Крок 2 Медицина (UA)',
     20: 'Krok 2 Medicine (EN)',
-    21: 'Krok 2 Public health (EN)',
+    21: 'Крок 2 Public health (EN)',
     22: 'Крок 2 Педіатрія (UA)',
     23: 'Крок 3 Епідеміологія',
     24: 'Крок 3 Медична Психологія',
@@ -107,19 +105,9 @@ class KrokScraper:
         if not os.path.exists(PDF_FOLDER): os.makedirs(PDF_FOLDER)
 
     def setup_font(self):
-        # Check if font exists in the repo
         if not os.path.exists(FONT_FILE):
-            print(f"❌ Error: {FONT_FILE} not found in repository root.", flush=True)
-            print("   Please upload DejaVuSans.ttf to your GitHub repo.", flush=True)
+            print(f"❌ Error: {FONT_FILE} not found.", flush=True)
             sys.exit(1)
-        
-        # Check for corrupt file (HTML saved as TTF)
-        if os.path.getsize(FONT_FILE) < 10000:
-             print(f"❌ Error: {FONT_FILE} is too small (<10KB). It is likely corrupt or an HTML file.", flush=True)
-             print("   Please download the raw TTF file and upload it again.", flush=True)
-             sys.exit(1)
-
-        # Register Font
         try:
             pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_FILE))
             print(f"✅ Font registered: {FONT_NAME}", flush=True)
@@ -157,6 +145,7 @@ class KrokScraper:
             self.driver.get(COURSE_URL)
             
             try:
+                # Use a more flexible search for the link
                 link_element = self.driver.find_element(By.PARTIAL_LINK_TEXT, target_name)
                 target_link = link_element.get_attribute('href')
                 print(f"🔗 Found link: {target_link}", flush=True)
@@ -164,13 +153,10 @@ class KrokScraper:
                 print(f"❌ Could not find link with text: {target_name}", flush=True)
                 sys.exit(1)
 
-            # --- SCRAPE ---
             questions = self.scrape_loop(target_link)
             
             if questions:
-                # 1. Save TXT
                 txt_path = self.save_txt(target_name, questions)
-                # 2. Convert to PDF
                 self.convert_to_pdf(txt_path)
             else:
                 print("❌ No questions collected.", flush=True)
@@ -182,28 +168,40 @@ class KrokScraper:
     def scrape_loop(self, quiz_link):
         questions_map = {}
         wait = WebDriverWait(self.driver, 10)
-        
         consecutive_empty_rounds = 0
         round_num = 1
         max_rounds = 4 
 
-        print(f"\n🚀 STARTING SCRAPE LOOP (Max empty rounds: {max_rounds})", flush=True)
+        print(f"\n🚀 STARTING SCRAPE LOOP", flush=True)
 
         while consecutive_empty_rounds < max_rounds:
             print(f"\n🔄 STARTING ROUND {round_num}...", flush=True)
             try:
                 self.driver.get(quiz_link)
 
-                # 1. Attempt / Continue
-                for sel in [".quizstartbuttondiv button", "//button[contains(text(), 'Continue')]", "//button[contains(text(), 'Attempt')]"]:
+                # 1. Handle Start/Continue/Re-attempt
+                started = False
+                # Added "Re-attempt" to the list of buttons to look for
+                selectors = [
+                    "//button[contains(text(), 'Re-attempt')]",
+                    "//button[contains(text(), 'Continue')]",
+                    "//button[contains(text(), 'Attempt')]",
+                    ".quizstartbuttondiv button"
+                ]
+                
+                for sel in selectors:
                     try:
                         if "//" in sel: btn = wait.until(EC.element_to_be_clickable((By.XPATH, sel)))
                         else: btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, sel)))
                         self.driver.execute_script("arguments[0].click();", btn)
+                        started = True
                         break
                     except: continue
                 
-                # 2. Popup
+                if not started:
+                    print("   ⚠️ Could not find a button to start the quiz. Checking if already in review...", flush=True)
+                
+                # 2. Handle Confirmation Popup (if any)
                 try:
                     popup_btn = self.driver.find_element(By.ID, "id_submitbutton")
                     if popup_btn.is_displayed(): self.driver.execute_script("arguments[0].click();", popup_btn)
@@ -211,31 +209,42 @@ class KrokScraper:
 
                 # 3. Finish Attempt
                 try:
-                    finish_link = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".endtestlink")))
-                    self.driver.execute_script("arguments[0].click();", finish_link)
-                except: 
-                    print("   ⚠️ Could not find 'Finish attempt' link. Retrying...", flush=True)
-                    consecutive_empty_rounds += 1
-                    continue
+                    # Try multiple ways to find the finish link
+                    finish_selectors = [".endtestlink", "//a[contains(@href, 'finishattempt.php')]", "//span[contains(text(), 'Finish attempt')]"]
+                    finish_btn = None
+                    for fs in finish_selectors:
+                        try:
+                            if "//" in fs: finish_btn = wait.until(EC.element_to_be_clickable((By.XPATH, fs)))
+                            else: finish_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, fs)))
+                            break
+                        except: continue
+                    
+                    if finish_btn:
+                        self.driver.execute_script("arguments[0].click();", finish_btn)
+                    else:
+                        # If we can't find finish, we might already be on the summary page
+                        pass
+                except: pass
 
-                # 4. Submit
-                for _ in range(3):
-                    try:
-                        s_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".btn-finishattempt button")))
-                        self.driver.execute_script("arguments[0].click();", s_btn)
-                        m_btn = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".modal-footer button.btn-primary")))
-                        self.driver.execute_script("arguments[0].click();", m_btn)
-                        break
-                    except: time.sleep(0.5)
+                # 4. Submit All and Finish
+                try:
+                    # Click the final submit button
+                    s_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".btn-finishattempt button")))
+                    self.driver.execute_script("arguments[0].click();", s_btn)
+                    # Confirm in modal
+                    m_btn = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".modal-footer button.btn-primary")))
+                    self.driver.execute_script("arguments[0].click();", m_btn)
+                    time.sleep(2)
+                except: pass
 
-                # 5. Expand
+                # 5. Expand All (Show all questions on one page)
                 try:
                     show_all = wait.until(EC.presence_of_element_located((By.XPATH, "//a[contains(@href, 'showall=1')]")))
                     self.driver.execute_script("arguments[0].click();", show_all)
                     time.sleep(2)
                 except: pass
 
-                # 6. Parse
+                # 6. Parse Questions
                 wait.until(EC.presence_of_element_located((By.CLASS_NAME, "que")))
                 soup = BeautifulSoup(self.driver.page_source, 'html.parser')
                 questions = soup.find_all("div", class_="que")
@@ -290,31 +299,24 @@ class KrokScraper:
         clean_name = re.sub(r'[\\/*?:"<>|]', "", name).strip()
         filename = f"{clean_name}.txt"
         filepath = os.path.join(TXT_FOLDER, filename)
-        
         with open(filepath, "w", encoding="utf-8") as f:
-            counter = 1
-            for _, val in data.items():
-                f.write(f"{counter}. {val}\n")
-                counter += 1
+            for i, (_, val) in enumerate(data.items(), 1):
+                f.write(f"{i}. {val}\n")
         print(f"\n💾 TXT Saved: {filepath}", flush=True)
         return filepath
 
-    # --- PDF LOGIC ---
     def wrap_text(self, text, font_name, font_size, max_width):
         lines = []
         words = text.split(' ')
         current_line = []
-        
         for word in words:
             test_line = ' '.join(current_line + [word])
-            width = pdfmetrics.stringWidth(test_line, font_name, font_size)
-            if width < max_width:
+            if pdfmetrics.stringWidth(test_line, font_name, font_size) < max_width:
                 current_line.append(word)
             else:
                 lines.append(' '.join(current_line))
                 current_line = [word]
-        if current_line:
-            lines.append(' '.join(current_line))
+        if current_line: lines.append(' '.join(current_line))
         return lines
 
     def convert_to_pdf(self, txt_path):
@@ -324,15 +326,10 @@ class KrokScraper:
 
         c = canvas.Canvas(pdf_path, pagesize=A4)
         width, height = A4
-        
-        margin_left = 40
-        margin_right = 40
-        max_text_width = width - margin_left - margin_right
-        line_height = 16
-        font_size = 11
-        
+        margin = 40
+        max_w = width - (margin * 2)
         y = height - 40 
-        c.setFont(FONT_NAME, font_size)
+        c.setFont(FONT_NAME, 11)
 
         with open(txt_path, "r", encoding="utf-8", errors="replace") as f:
             for line in f:
@@ -344,36 +341,27 @@ class KrokScraper:
                 bg_color = None
                 text_color = colors.black
 
-                # 1. DETECT QUESTION (Yellow)
                 if re.match(r'^\d+\.', line):
                     bg_color = colors.lightyellow
-                    text_color = colors.black
-                
-                # 2. DETECT CORRECT ANSWER (Green)
                 elif line.startswith('*'):
-                    line = line[1:].strip() # Remove asterisk
+                    line = line[1:].strip()
                     bg_color = colors.lightgreen
                     text_color = colors.darkgreen
-                
-                # 3. NORMAL OPTION
                 else:
                     text_color = colors.darkgrey
 
-                wrapped_lines = self.wrap_text(line, FONT_NAME, font_size, max_text_width)
-
-                for wrapped_line in wrapped_lines:
-                    if y < 40:
+                wrapped_lines = self.wrap_text(line, FONT_NAME, 11, max_w)
+                for wl in wrapped_lines:
+                    if y < 50:
                         c.showPage()
-                        c.setFont(FONT_NAME, font_size)
+                        c.setFont(FONT_NAME, 11)
                         y = height - 40
-
                     if bg_color:
                         c.setFillColor(bg_color)
-                        c.rect(margin_left - 2, y - 4, max_text_width + 4, line_height, fill=1, stroke=0)
-
+                        c.rect(margin - 2, y - 4, max_w + 4, 15, fill=1, stroke=0)
                     c.setFillColor(text_color)
-                    c.drawString(margin_left, y, wrapped_line)
-                    y -= line_height
+                    c.drawString(margin, y, wl)
+                    y -= 15
 
         c.save()
         print(f"✅ PDF Created Successfully.", flush=True)
