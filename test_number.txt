@@ -3,7 +3,7 @@
 3	- Крок 1 Стоматологія (UA)
 4	- Krok 1 Stomatology (EN)
 5	- Krok 1 Pharmacy (EN)
-6	- Krok 1 Medicine (EN)
+6	- Krok 1 Medicine (EN) (від 2026 року)
 7	- Крок 1 Медицина (UA)
 8	- Крок 1 Фармація (UA) (2025+)
 9	- Крок 2 Медична психологія (UA)
