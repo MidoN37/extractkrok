@@ -336,6 +336,20 @@ hr { border: none; border-top: 1px solid var(--rule); margin: 8px 0; }
     <div class="pub-tagline">Runs your actual pdf_format.py via GitHub Actions</div>
   </div>
 
+  <!-- Token -->
+  <div class="section">
+    <div class="section-label">GitHub Token</div>
+    <div class="token-row">
+      <input class="token-input" type="password" id="token-input"
+             placeholder="ghp_xxxxxxxxxxxx" autocomplete="off" spellcheck="false">
+      <button class="btn-save" onclick="saveToken()">SAVE</button>
+    </div>
+    <div class="token-status" id="token-status"></div>
+    <p class="help" style="margin-top:8px">
+      Enter once — saved in your browser only.
+    </p>
+  </div>
+
   <!-- File -->
   <div class="section">
     <div class="section-label">TXT File</div>
@@ -379,11 +393,37 @@ const BRANCH = 'main';
 let fileContent = null;
 let fileName = null;
 
-const TOKEN = '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';
+// Token management
+function saveToken() {
+  const val = document.getElementById('token-input').value.trim();
+  if (!val.startsWith('ghp_') && !val.startsWith('github_pat_')) {
+    setTokenStatus('Doesn\'t look like a valid token (should start with ghp_ or github_pat_)', false);
+    return;
+  }
+  localStorage.setItem('gh_token', val);
+  setTokenStatus('Token saved ✓', true);
+  checkReady();
+}
 
-function getToken() { return TOKEN; }
+function getToken() {
+  return localStorage.getItem('gh_token') || '';
+}
 
-window.addEventListener('load', () => { checkReady(); });
+function setTokenStatus(msg, ok) {
+  const el = document.getElementById('token-status');
+  el.textContent = msg;
+  el.className = 'token-status ' + (ok ? 'ok' : 'err');
+}
+
+// Load saved token on page load
+window.addEventListener('load', () => {
+  const saved = getToken();
+  if (saved) {
+    document.getElementById('token-input').value = saved;
+    setTokenStatus('Token loaded from storage ✓', true);
+  }
+  checkReady();
+});
 
 // File handling
 const fileInput = document.getElementById('file-input');
