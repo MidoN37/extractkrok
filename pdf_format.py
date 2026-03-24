@@ -1,30 +1,83 @@
-import os
-import re
+name: Convert TXT to PDF
+
+on:
+  workflow_dispatch:
+    inputs:
+      txt_filename:
+        description: 'TXT filename inside input/ folder (e.g. test_6.txt)'
+        required: true
+        type: string
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install Dependencies
+        run: pip install reportlab
+
+      - name: Copy font if needed
+        run: |
+          # DejaVuSans is available on ubuntu, copy it next to the script
+          if [ ! -f DejaVuSans.ttf ]; then
+            FONT=$(find /usr/share/fonts -name "DejaVuSans.ttf" 2>/dev/null | head -1)
+            if [ -n "$FONT" ]; then
+              cp "$FONT" DejaVuSans.ttf
+            else
+              pip install --quiet fonttools
+              python -c "
+import urllib.request
+url = 'https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-fonts-ttf-2.37.tar.bz2'
+urllib.request.urlretrieve(url, 'dv.tar.bz2')
+import tarfile
+with tarfile.open('dv.tar.bz2') as t:
+    member = next(m for m in t.getmembers() if 'DejaVuSans.ttf' in m.name and 'Bold' not in m.name and 'Italic' not in m.name and 'Mono' not in m.name)
+    member.name = 'DejaVuSans.ttf'
+    t.extract(member, '.')
+"
+            fi
+          fi
+
+      - name: Run pdf_format.py
+        run: |
+          INPUT="input/${{ github.event.inputs.txt_filename }}"
+          if [ ! -f "$INPUT" ]; then
+            echo "❌ File not found: $INPUT"
+            exit 1
+          fi
+          # pdf_format.py reads target_file variable — we patch it at runtime
+          python - <<EOF
 import sys
+sys.argv = []
+import os, re
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib import colors
 
-# --- CONFIG ---
-FONT_FILE = "DejaVuSans.ttf" 
-FONT_NAME = 'DejaVuSans'
+FONT_FILE = "DejaVuSans.ttf"
+FONT_NAME = "DejaVuSans"
 
-def setup_font():
-    if not os.path.exists(FONT_FILE):
-        print(f"❌ Error: {FONT_FILE} not found. Please place it in this directory.")
-        sys.exit(1)
-    try:
-        pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_FILE))
-    except Exception as e:
-        print(f"❌ Font Registration Error: {e}")
-        sys.exit(1)
+pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_FILE))
+
+input_txt = "$INPUT"
+output_pdf = "pdf/" + os.path.basename(input_txt).replace(".txt", ".pdf")
+os.makedirs("pdf", exist_ok=True)
 
 def wrap_text(text, font_name, font_size, max_width):
-    """Exact wrapping logic from the original script."""
     lines = []
-    words = text.split(' ')
+    words = text.split()
     current_line = []
     for word in words:
         test_line = ' '.join(current_line + [word])
@@ -33,95 +86,56 @@ def wrap_text(text, font_name, font_size, max_width):
         else:
             lines.append(' '.join(current_line))
             current_line = [word]
-    if current_line: 
+    if current_line:
         lines.append(' '.join(current_line))
     return lines
 
-def convert_to_pdf(input_txt):
-    if not os.path.exists(input_txt):
-        print(f"❌ Error: {input_txt} not found.")
-        return
+c = canvas.Canvas(output_pdf, pagesize=A4)
+width, height = A4
+margin = 40
+max_w = width - (margin * 2)
+y = height - 40
+font_size = 10
+line_height = 14
+c.setFont(FONT_NAME, font_size)
 
-    output_pdf = input_txt.replace(".txt", ".pdf")
-    print(f"⚙️ Converting {input_txt} to {output_pdf}...")
+with open(input_txt, "r", encoding="utf-8", errors="replace") as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            y -= 6
+            continue
+        bg_color = None
+        text_color = colors.black
+        if re.match(r'^\d+\.', line):
+            bg_color = colors.lightyellow
+        elif line.startswith('*'):
+            line = line[1:].strip()
+            bg_color = colors.lightgreen
+            text_color = colors.darkgreen
+        else:
+            text_color = colors.darkgrey
+        wrapped_lines = wrap_text(line, FONT_NAME, font_size, max_w)
+        for wl in wrapped_lines:
+            if y < 40:
+                c.showPage()
+                c.setFont(FONT_NAME, font_size)
+                y = height - 40
+            if bg_color:
+                c.setFillColor(bg_color)
+                c.rect(margin - 2, y - 4, max_w + 4, line_height, fill=1, stroke=0)
+            c.setFillColor(text_color)
+            c.drawString(margin, y, wl)
+            y -= line_height
 
-    setup_font()
-    
-    c = canvas.Canvas(output_pdf, pagesize=A4)
-    width, height = A4
-    margin = 40
-    max_w = width - (margin * 2)
-    y = height - 40 
-    font_size = 11
-    c.setFont(FONT_NAME, font_size)
+c.save()
+print(f"✅ PDF Created: {output_pdf}")
+EOF
 
-    with open(input_txt, "r", encoding="utf-8", errors="replace") as f:
-        for line in f:
-            line = line.strip()
-            
-            # Handle empty lines
-            if not line:
-                y -= 10
-                continue
-
-            # --- STYLING LOGIC ---
-            bg_color = None
-            text_color = colors.black
-
-            # 1. Logic for Questions (Starts with Number + Dot)
-            if re.match(r'^\d+\.', line):
-                bg_color = colors.lightyellow
-            
-            # 2. Logic for Correct Answers (Starts with *)
-            elif line.startswith('*'):
-                line = line[1:].strip() # Strip the asterisk
-                bg_color = colors.lightgreen
-                text_color = colors.darkgreen
-            
-            # 3. Logic for Other Options
-            else:
-                text_color = colors.darkgrey
-
-            # Wrap text to fit page width
-            wrapped_lines = wrap_text(line, FONT_NAME, font_size, max_w)
-            
-            for wl in wrapped_lines:
-                # Check for page break
-                if y < 50:
-                    c.showPage()
-                    c.setFont(FONT_NAME, font_size)
-                    y = height - 40
-                
-                # Draw Background Rectangle
-                if bg_color:
-                    c.setFillColor(bg_color)
-                    # Rect coordinates: (x, y, width, height)
-                    c.rect(margin - 2, y - 4, max_w + 4, 15, fill=1, stroke=0)
-                
-                # Draw Text
-                c.setFillColor(text_color)
-                c.drawString(margin, y, wl)
-                
-                # Move cursor down
-                y -= 15
-
-    c.save()
-    print(f"✅ PDF Created: {output_pdf}")
-
-if __name__ == "__main__":
-    # You can change this to any filename
-    target_file = "test_data.txt"
-    
-    # Create a dummy file for testing if it doesn't exist
-    if not os.path.exists(target_file):
-        with open(target_file, "w", encoding="utf-8") as f:
-            f.write("1. What is the capital of Ukraine?\n")
-            f.write("A. Lviv\n")
-            f.write("*B. Kyiv\n")
-            f.write("C. Odesa\n")
-            f.write("\n")
-            f.write("2. Example of a very long question text that should trigger the text wrapping logic inside the PDF generator to ensure it does not bleed off the edge of the A4 page size.\n")
-            f.write("*A. Correct Answer highlight\n")
-            f.write("B. Grey distractor\n")
-            
-    convert_to_pdf(target_file)
+      - name: Commit and Push PDF
+        run: |
+          git config --global user.name "KrokPDFBot"
+          git config --global user.email "bot@noreply.github.com"
+          git add pdf/*.pdf
+          git commit -m "PDF: ${{ github.event.inputs.txt_filename }}" || echo "No changes to commit"
+          git push
