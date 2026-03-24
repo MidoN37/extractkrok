@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Krok PDF</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=IBM+Plex+Sans:wght@400;500;700&display=swap');
+
+:root {
+  --bg: #f5f0e8;
+  --ink: #1a1a18;
+  --paper: #fdfaf4;
+  --rule: #d4cfc4;
+  --accent: #c0392b;
+  --accent2: #2c7a4b;
+  --warn: #e67e22;
+  --mono: 'IBM Plex Mono', monospace;
+  --sans: 'IBM Plex Sans', sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  min-height: 100vh;
+  padding: 0;
+  overflow-x: hidden;
+}
+
+/* Ruled paper texture */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: repeating-linear-gradient(
+    transparent,
+    transparent 27px,
+    rgba(0,0,0,0.06) 28px
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+.page {
+  position: relative;
+  z-index: 1;
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 32px 20px 64px;
+}
+
+/* Header */
+.masthead {
+  border-bottom: 3px solid var(--ink);
+  padding-bottom: 12px;
+  margin-bottom: 28px;
+}
+
+.masthead-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.pub-name {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 22px;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.pub-issue {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: #888;
+  letter-spacing: 0.1em;
+}
+
+.pub-tagline {
+  font-family: var(--sans);
+  font-size: 11px;
+  color: #666;
+  letter-spacing: 0.04em;
+  font-style: italic;
+}
+
+/* Token section */
+.section {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--ink);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.section-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: #888;
+  margin-bottom: 10px;
+}
+
+/* Token input */
+.token-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.token-input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 10px 12px;
+  color: var(--ink);
+  outline: none;
+  min-width: 0;
+  transition: border-color 0.15s;
+}
+
+.token-input:focus { border-color: var(--ink); }
+
+.btn-save {
+  background: var(--ink);
+  color: var(--bg);
+  border: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 10px 14px;
+  cursor: pointer;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.btn-save:hover { background: #333; }
+
+.token-status {
+  font-family: var(--mono);
+  font-size: 11px;
+  margin-top: 8px;
+  padding: 6px 10px;
+  display: none;
+}
+
+.token-status.ok { background: rgba(44,122,75,0.12); color: var(--accent2); display: block; }
+.token-status.err { background: rgba(192,57,43,0.1); color: var(--accent); display: block; }
+
+/* Drop zone */
+.dropzone {
+  border: 2px dashed var(--rule);
+  padding: 28px 16px;
+  text-align: center;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.15s;
+  background: var(--bg);
+}
+
+.dropzone input[type="file"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  width: 100%;
+  height: 100%;
+}
+
+.dropzone:hover, .dropzone.over {
+  border-color: var(--ink);
+  background: rgba(0,0,0,0.02);
+}
+
+.dz-icon { font-size: 28px; margin-bottom: 8px; }
+
+.dz-label {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.dz-hint { font-size: 11px; color: #888; font-style: italic; }
+
+/* File loaded */
+.file-chip {
+  display: none;
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: rgba(44,122,75,0.1);
+  border: 1px solid rgba(44,122,75,0.3);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent2);
+  gap: 8px;
+  align-items: center;
+}
+
+.file-chip.visible { display: flex; }
+.file-chip-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Main button */
+.btn-convert {
+  width: 100%;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.06em;
+  padding: 18px;
+  cursor: pointer;
+  text-transform: uppercase;
+  margin-top: 4px;
+  transition: background 0.15s, transform 0.1s;
+  position: relative;
+}
+
+.btn-convert:hover:not(:disabled) { background: #a93226; transform: translateY(-1px); }
+.btn-convert:active:not(:disabled) { transform: translateY(0); }
+.btn-convert:disabled { background: #ccc; color: #999; cursor: not-allowed; transform: none; }
+
+/* Status log */
+.log {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 2;
+  margin-top: 16px;
+  display: none;
+}
+
+.log.visible { display: block; }
+
+.log-line {
+  padding: 2px 0;
+  border-bottom: 1px solid var(--rule);
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.log-time { color: #aaa; flex-shrink: 0; }
+.log-msg { color: var(--ink); }
+.log-msg.ok { color: var(--accent2); font-weight: 600; }
+.log-msg.err { color: var(--accent); font-weight: 600; }
+.log-msg.spin::after {
+  content: '';
+  display: inline-block;
+  animation: dots 1.2s infinite;
+}
+
+@keyframes dots {
+  0%   { content: '.'; }
+  33%  { content: '..'; }
+  66%  { content: '...'; }
+}
+
+/* Download */
+.download-box {
+  display: none;
+  margin-top: 16px;
+  background: rgba(44,122,75,0.08);
+  border: 2px solid var(--accent2);
+  padding: 20px;
+  text-align: center;
+}
+
+.download-box.visible { display: block; }
+
+.download-title {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--accent2);
+  margin-bottom: 12px;
+}
+
+.btn-download {
+  display: inline-block;
+  background: var(--accent2);
+  color: #fff;
+  text-decoration: none;
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 13px;
+  padding: 12px 24px;
+  letter-spacing: 0.05em;
+  transition: background 0.15s;
+}
+
+.btn-download:hover { background: #235f3a; }
+
+.download-sub {
+  font-size: 11px;
+  color: #888;
+  margin-top: 10px;
+  font-style: italic;
+}
+
+/* Divider */
+hr { border: none; border-top: 1px solid var(--rule); margin: 8px 0; }
+
+/* Help text */
+.help {
+  font-size: 11px;
+  color: #999;
+  font-style: italic;
+  margin-top: 6px;
+  line-height: 1.6;
+}
+
+.help a { color: #888; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="masthead">
+    <div class="masthead-top">
+      <span class="pub-name">KROK PDF</span>
+      <span class="pub-issue">CONVERTER · v1.0</span>
+    </div>
+    <div class="pub-tagline">Runs your actual pdf_format.py via GitHub Actions</div>
+  </div>
+
+  <!-- Token -->
+  <div class="section">
+    <div class="section-label">GitHub Token</div>
+    <div class="token-row">
+      <input class="token-input" type="password" id="token-input"
+             placeholder="ghp_xxxxxxxxxxxx" autocomplete="off" spellcheck="false">
+      <button class="btn-save" onclick="saveToken()">SAVE</button>
+    </div>
+    <div class="token-status" id="token-status"></div>
+    <p class="help" style="margin-top:8px">
+      Need a token? <a href="https://github.com/settings/tokens/new?scopes=repo,workflow" target="_blank">github.com/settings/tokens</a> — check <strong>repo</strong> + <strong>workflow</strong>. Saved in your browser only.
+    </p>
+  </div>
+
+  <!-- File -->
+  <div class="section">
+    <div class="section-label">TXT File</div>
+    <div class="dropzone" id="dropzone">
+      <input type="file" id="file-input" accept=".txt">
+      <div class="dz-icon">📄</div>
+      <div class="dz-label">Tap to select .txt</div>
+      <div class="dz-hint">Your Krok exam file</div>
+    </div>
+    <div class="file-chip" id="file-chip">
+      <span>📎</span>
+      <span class="file-chip-name" id="file-chip-name">—</span>
+      <span id="file-chip-size" style="color:#888; flex-shrink:0">—</span>
+    </div>
+  </div>
+
+  <button class="btn-convert" id="convert-btn" disabled onclick="runConversion()">
+    Generate PDF
+  </button>
+
+  <!-- Log -->
+  <div class="log" id="log"></div>
+
+  <!-- Download -->
+  <div class="download-box" id="download-box">
+    <div class="download-title">✅ PDF Ready</div>
+    <a class="btn-download" id="download-link" href="#" target="_blank">↓ Download PDF</a>
+    <div class="download-sub" id="download-sub"></div>
+  </div>
+
+</div>
+
+<script>
+// ---- CONFIG ----
+const OWNER = 'MidoN37';
+const REPO  = 'extractkrok';
+const WORKFLOW_FILE = 'convert_pdf.yml';
+const BRANCH = 'main';
+// ----------------
+
+let fileContent = null;
+let fileName = null;
+
+// Token management
+function saveToken() {
+  const val = document.getElementById('token-input').value.trim();
+  if (!val.startsWith('ghp_') && !val.startsWith('github_pat_')) {
+    setTokenStatus('Doesn\'t look like a valid token (should start with ghp_ or github_pat_)', false);
+    return;
+  }
+  localStorage.setItem('gh_token', val);
+  setTokenStatus('Token saved ✓', true);
+  checkReady();
+}
+
+function getToken() {
+  return localStorage.getItem('gh_token') || '';
+}
+
+function setTokenStatus(msg, ok) {
+  const el = document.getElementById('token-status');
+  el.textContent = msg;
+  el.className = 'token-status ' + (ok ? 'ok' : 'err');
+}
+
+// Load saved token on page load
+window.addEventListener('load', () => {
+  const saved = getToken();
+  if (saved) {
+    document.getElementById('token-input').value = saved;
+    setTokenStatus('Token loaded from storage ✓', true);
+  }
+  checkReady();
+});
+
+// File handling
+const fileInput = document.getElementById('file-input');
+const dropzone = document.getElementById('dropzone');
+
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('over'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('over'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropzone.classList.remove('over');
+  if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) handleFile(fileInput.files[0]);
+});
+
+function handleFile(file) {
+  if (!file.name.endsWith('.txt')) { alert('Please select a .txt file'); return; }
+  fileName = file.name;
+  const reader = new FileReader();
+  reader.onload = e => {
+    fileContent = e.target.result;
+    document.getElementById('file-chip-name').textContent = file.name;
+    document.getElementById('file-chip-size').textContent = (file.size/1024).toFixed(1) + ' KB';
+    document.getElementById('file-chip').classList.add('visible');
+    document.getElementById('download-box').classList.remove('visible');
+    document.getElementById('log').innerHTML = '';
+    document.getElementById('log').classList.remove('visible');
+    checkReady();
+  };
+  reader.readAsText(file, 'UTF-8');
+}
+
+function checkReady() {
+  const ok = fileContent && getToken();
+  document.getElementById('convert-btn').disabled = !ok;
+}
+
+// Logging
+function log(msg, cls='') {
+  const logEl = document.getElementById('log');
+  logEl.classList.add('visible');
+  const now = new Date().toTimeString().slice(0,8);
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  line.innerHTML = `<span class="log-time">${now}</span><span class="log-msg ${cls}">${msg}</span>`;
+  logEl.appendChild(line);
+  line.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  return line.querySelector('.log-msg');
+}
+
+// GitHub API helpers
+async function ghApi(path, method='GET', body=null) {
+  const token = getToken();
+  const opts = {
+    method,
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'Content-Type': 'application/json',
+    }
+  };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(`https://api.github.com${path}`, opts);
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error(`GitHub API ${r.status}: ${err.message || r.statusText}`);
+  }
+  return r.status === 204 ? null : r.json();
+}
+
+// Main conversion flow
+async function runConversion() {
+  const btn = document.getElementById('convert-btn');
+  btn.disabled = true;
+  document.getElementById('download-box').classList.remove('visible');
+  document.getElementById('log').innerHTML = '';
+
+  try {
+    // 1. Commit the txt file to input/ folder
+    log('Uploading ' + fileName + ' to repo…');
+    const b64 = btoa(unescape(encodeURIComponent(fileContent)));
+    const remotePath = `input/${fileName}`;
+
+    // Check if file exists to get its SHA (needed for update)
+    let sha = undefined;
+    try {
+      const existing = await ghApi(`/repos/${OWNER}/${REPO}/contents/${remotePath}`);
+      sha = existing.sha;
+    } catch(e) { /* new file, no sha needed */ }
+
+    const commitBody = {
+      message: `Upload ${fileName} for PDF conversion`,
+      content: b64,
+      branch: BRANCH,
+    };
+    if (sha) commitBody.sha = sha;
+
+    await ghApi(`/repos/${OWNER}/${REPO}/contents/${remotePath}`, 'PUT', commitBody);
+    log('File committed ✓', 'ok');
+
+    // 2. Trigger workflow
+    log('Triggering convert_pdf.yml…');
+    const triggerTime = new Date().toISOString();
+    await ghApi(`/repos/${OWNER}/${REPO}/actions/workflows/${WORKFLOW_FILE}/dispatches`, 'POST', {
+      ref: BRANCH,
+      inputs: { txt_filename: fileName }
+    });
+    log('Workflow triggered ✓', 'ok');
+
+    // 3. Poll for workflow run
+    const spinEl = log('Waiting for run to start', 'spin');
+    let runId = null;
+    for (let i = 0; i < 20; i++) {
+      await sleep(3000);
+      const runs = await ghApi(
+        `/repos/${OWNER}/${REPO}/actions/workflows/${WORKFLOW_FILE}/runs?branch=${BRANCH}&per_page=5`
+      );
+      const recent = (runs.workflow_runs || []).find(r => {
+        return new Date(r.created_at) >= new Date(new Date(triggerTime).getTime() - 10000);
+      });
+      if (recent) { runId = recent.id; break; }
+    }
+
+    if (!runId) throw new Error('Could not find workflow run. Check Actions tab on GitHub.');
+    spinEl.textContent = `Run #${runId} found ✓`;
+    spinEl.className = 'log-msg ok';
+
+    // 4. Poll run status
+    const statusEl = log('Running python script', 'spin');
+    let conclusion = null;
+    for (let i = 0; i < 60; i++) {
+      await sleep(5000);
+      const run = await ghApi(`/repos/${OWNER}/${REPO}/actions/runs/${runId}`);
+      if (run.status === 'completed') {
+        conclusion = run.conclusion;
+        break;
+      }
+      statusEl.textContent = `Running… (${(i+1)*5}s elapsed)`;
+    }
+
+    if (conclusion !== 'success') {
+      throw new Error(`Workflow ended with: ${conclusion}. Check Actions tab for logs.`);
+    }
+    statusEl.textContent = 'pdf_format.py completed ✓';
+    statusEl.className = 'log-msg ok';
+
+    // 5. Get download URL
+    log('Fetching PDF…');
+    const pdfName = fileName.replace('.txt', '.pdf');
+    const pdfPath = `pdf/${pdfName}`;
+    const fileInfo = await ghApi(`/repos/${OWNER}/${REPO}/contents/${pdfPath}`);
+    const downloadUrl = fileInfo.download_url;
+
+    log('PDF ready ✓', 'ok');
+
+    document.getElementById('download-link').href = downloadUrl;
+    document.getElementById('download-link').download = pdfName;
+    document.getElementById('download-sub').textContent = pdfName;
+    document.getElementById('download-box').classList.add('visible');
+    document.getElementById('download-box').scrollIntoView({ behavior: 'smooth' });
+
+  } catch(err) {
+    log('Error: ' + err.message, 'err');
+    log('Check GitHub Actions tab for details.', 'err');
+  }
+
+  btn.disabled = false;
+  checkReady();
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+</script>
+</body>
+</html>
