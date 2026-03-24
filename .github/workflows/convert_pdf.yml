@@ -1,0 +1,140 @@
+name: Convert TXT to PDF
+
+on:
+  workflow_dispatch:
+    inputs:
+      txt_filename:
+        description: 'TXT filename inside input/ folder (e.g. test_6.txt)'
+        required: true
+        type: string
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install Dependencies
+        run: pip install reportlab
+
+      - name: Copy font if needed
+        run: |
+          # DejaVuSans is available on ubuntu, copy it next to the script
+          if [ ! -f DejaVuSans.ttf ]; then
+            FONT=$(find /usr/share/fonts -name "DejaVuSans.ttf" 2>/dev/null | head -1)
+            if [ -n "$FONT" ]; then
+              cp "$FONT" DejaVuSans.ttf
+            else
+              pip install --quiet fonttools
+              python -c "
+import urllib.request
+url = 'https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-fonts-ttf-2.37.tar.bz2'
+urllib.request.urlretrieve(url, 'dv.tar.bz2')
+import tarfile
+with tarfile.open('dv.tar.bz2') as t:
+    member = next(m for m in t.getmembers() if 'DejaVuSans.ttf' in m.name and 'Bold' not in m.name and 'Italic' not in m.name and 'Mono' not in m.name)
+    member.name = 'DejaVuSans.ttf'
+    t.extract(member, '.')
+"
+            fi
+          fi
+
+      - name: Run pdf_format.py
+        run: |
+          INPUT="input/${{ github.event.inputs.txt_filename }}"
+          if [ ! -f "$INPUT" ]; then
+            echo "❌ File not found: $INPUT"
+            exit 1
+          fi
+          # pdf_format.py reads target_file variable — we patch it at runtime
+          python - <<EOF
+import sys
+sys.argv = []
+import os, re
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.lib import colors
+
+FONT_FILE = "DejaVuSans.ttf"
+FONT_NAME = "DejaVuSans"
+
+pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_FILE))
+
+input_txt = "$INPUT"
+output_pdf = "pdf/" + os.path.basename(input_txt).replace(".txt", ".pdf")
+os.makedirs("pdf", exist_ok=True)
+
+def wrap_text(text, font_name, font_size, max_width):
+    lines = []
+    words = text.split(' ')
+    current_line = []
+    for word in words:
+        test_line = ' '.join(current_line + [word])
+        if pdfmetrics.stringWidth(test_line, font_name, font_size) < max_width:
+            current_line.append(word)
+        else:
+            lines.append(' '.join(current_line))
+            current_line = [word]
+    if current_line:
+        lines.append(' '.join(current_line))
+    return lines
+
+c = canvas.Canvas(output_pdf, pagesize=A4)
+width, height = A4
+margin = 40
+max_w = width - (margin * 2)
+y = height - 40
+font_size = 11
+c.setFont(FONT_NAME, font_size)
+
+with open(input_txt, "r", encoding="utf-8", errors="replace") as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            y -= 10
+            continue
+        bg_color = None
+        text_color = colors.black
+        if re.match(r'^\d+\.', line):
+            bg_color = colors.lightyellow
+        elif line.startswith('*'):
+            line = line[1:].strip()
+            bg_color = colors.lightgreen
+            text_color = colors.darkgreen
+        else:
+            text_color = colors.darkgrey
+        wrapped_lines = wrap_text(line, FONT_NAME, font_size, max_w)
+        for wl in wrapped_lines:
+            if y < 50:
+                c.showPage()
+                c.setFont(FONT_NAME, font_size)
+                y = height - 40
+            if bg_color:
+                c.setFillColor(bg_color)
+                c.rect(margin - 2, y - 4, max_w + 4, 15, fill=1, stroke=0)
+            c.setFillColor(text_color)
+            c.drawString(margin, y, wl)
+            y -= 15
+
+c.save()
+print(f"✅ PDF Created: {output_pdf}")
+EOF
+
+      - name: Commit and Push PDF
+        run: |
+          git config --global user.name "KrokPDFBot"
+          git config --global user.email "bot@noreply.github.com"
+          git add pdf/*.pdf
+          git commit -m "PDF: ${{ github.event.inputs.txt_filename }}" || echo "No changes to commit"
+          git push
